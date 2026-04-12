@@ -45,7 +45,18 @@ def do_train(args, model, train_dataloader, save_dir="./out"):
     # You can use progress_bar.update(1) to see the progress during training
     # You can refer to the pytorch tutorial covered in class for reference
 
-    raise NotImplementedError
+    for _ in range(num_epochs):
+        model.train()
+        for batch in train_dataloader:
+            batch = {k: v.to(device) for k, v in batch.items()}
+
+            optimizer.zero_grad()
+            outputs = model(**batch)
+            loss = outputs.loss
+            loss.backward()
+            optimizer.step()
+            lr_scheduler.step()
+            progress_bar.update(1)
 
     ##### YOUR CODE ENDS HERE ######
 
@@ -93,7 +104,24 @@ def create_augmented_dataloader(args, dataset):
     # dataloader will be for the original training split augmented with 5k random transformed examples from the training set.
     # You may find it helpful to see how the dataloader was created at other place in this code.
 
-    raise NotImplementedError
+    augmented_subset = dataset["train"].shuffle(seed=42).select(range(5000))
+    transformed_subset = augmented_subset.map(custom_transform, load_from_cache_file=False)
+    augmented_dataset = datasets.concatenate_datasets([dataset["train"], transformed_subset])
+
+    tokenized_augmented_dataset = augmented_dataset.map(
+        tokenize_function,
+        batched=True,
+        load_from_cache_file=False,
+    )
+    tokenized_augmented_dataset = tokenized_augmented_dataset.remove_columns(["text"])
+    tokenized_augmented_dataset = tokenized_augmented_dataset.rename_column("label", "labels")
+    tokenized_augmented_dataset.set_format("torch")
+
+    train_dataloader = DataLoader(
+        tokenized_augmented_dataset,
+        shuffle=True,
+        batch_size=args.batch_size,
+    )
 
     ##### YOUR CODE ENDS HERE ######
 
@@ -142,11 +170,18 @@ if __name__ == "__main__":
                         help="use a subset for training to debug your training loop")
     parser.add_argument("--debug_transformation", action="store_true",
                         help="print a few transformed examples for debugging")
+    parser.add_argument("--debug", type=str, choices=["train", "transformation"],
+                        help="compatibility alias for selecting a debug mode")
     parser.add_argument("--learning_rate", type=float, default=5e-5)
     parser.add_argument("--num_epochs", type=int, default=3)
     parser.add_argument("--batch_size", type=int, default=8)
 
     args = parser.parse_args()
+
+    if args.debug == "train":
+        args.debug_train = True
+    elif args.debug == "transformation":
+        args.debug_transformation = True
 
     global device
     global tokenizer

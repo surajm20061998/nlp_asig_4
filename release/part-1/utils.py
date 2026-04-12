@@ -16,6 +16,29 @@ from nltk.tokenize.treebank import TreebankWordDetokenizer
 
 random.seed(0)
 
+KEYBOARD_NEIGHBORS = {
+    "a": "qwsz",
+    "e": "wsdfr",
+    "i": "ujko",
+    "o": "iklp",
+    "u": "yhji",
+    "b": "vghn",
+    "c": "xdfv",
+    "d": "ersfcx",
+    "g": "tyfhvb",
+    "h": "yugjbn",
+    "k": "ijolm",
+    "l": "opk",
+    "m": "njk",
+    "n": "bhjm",
+    "p": "ol",
+    "r": "edft",
+    "s": "awedxz",
+    "t": "rfgy",
+    "y": "tghu",
+}
+PROTECTED_TOKENS = {"not", "no", "never", "n't"}
+
 
 def example_transform(example):
     example["text"] = example["text"].lower()
@@ -44,7 +67,46 @@ def custom_transform(example):
 
     # You should update example["text"] using your transformation
 
-    raise NotImplementedError
+    tokens = word_tokenize(example["text"])
+    transformed_tokens = []
+
+    for token in tokens:
+        if not token.isalpha():
+            transformed_tokens.append(token)
+            continue
+
+        lower_token = token.lower()
+        new_token = lower_token
+
+        if lower_token not in PROTECTED_TOKENS and len(lower_token) >= 4 and random.random() < 0.12:
+            synonyms = set()
+            for synset in wordnet.synsets(lower_token):
+                for lemma in synset.lemmas():
+                    candidate = lemma.name().replace("_", " ").lower()
+                    if (
+                        candidate.isalpha()
+                        and candidate != lower_token
+                        and len(candidate) >= 3
+                    ):
+                        synonyms.add(candidate)
+
+            if synonyms:
+                new_token = random.choice(sorted(synonyms))
+
+        if lower_token not in PROTECTED_TOKENS and len(new_token) >= 4 and random.random() < 0.18:
+            typo_positions = [
+                idx for idx, char in enumerate(new_token)
+                if char in KEYBOARD_NEIGHBORS
+            ]
+            if typo_positions:
+                typo_idx = random.choice(typo_positions)
+                replacement_choices = KEYBOARD_NEIGHBORS[new_token[typo_idx]]
+                replacement = random.choice(replacement_choices)
+                new_token = new_token[:typo_idx] + replacement + new_token[typo_idx + 1:]
+
+        transformed_tokens.append(new_token)
+
+    example["text"] = TreebankWordDetokenizer().detokenize(transformed_tokens)
 
     ##### YOUR CODE ENDS HERE ######
 
