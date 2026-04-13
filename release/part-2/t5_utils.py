@@ -8,10 +8,14 @@ from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS
 import wandb
 
 DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+MODEL_NAME = 'google-t5/t5-small'
 
 def setup_wandb(args):
-    # Implement this if you wish to use wandb in your experiments
-    pass
+    wandb.init(
+        project='nlp-hw4-text-to-sql',
+        name=args.experiment_name,
+        config=vars(args),
+    )
 
 def initialize_model(args):
     '''
@@ -20,7 +24,17 @@ def initialize_model(args):
     or training a T5 model initialized with the 'google-t5/t5-small' config
     from scratch.
     '''
-    pass
+    if args.finetune:
+        model = T5ForConditionalGeneration.from_pretrained(MODEL_NAME)
+    else:
+        config = T5Config.from_pretrained(MODEL_NAME)
+        model = T5ForConditionalGeneration(config)
+
+    if model.config.decoder_start_token_id is None:
+        model.config.decoder_start_token_id = model.config.pad_token_id
+
+    model.to(DEVICE)
+    return model
 
 def mkdir(dirpath):
     if not os.path.exists(dirpath):
@@ -31,11 +45,20 @@ def mkdir(dirpath):
 
 def save_model(checkpoint_dir, model, best):
     # Save model checkpoint to be able to load the model later
-    pass
+    mkdir(checkpoint_dir)
+    checkpoint_name = 'best' if best else 'last'
+    model.save_pretrained(os.path.join(checkpoint_dir, checkpoint_name))
 
 def load_model_from_checkpoint(args, best):
     # Load model from a checkpoint
-    pass
+    model_type = 'ft' if args.finetune else 'scr'
+    checkpoint_dir = os.path.join('checkpoints', f'{model_type}_experiments', args.experiment_name)
+    checkpoint_name = 'best' if best else 'last'
+    model = T5ForConditionalGeneration.from_pretrained(os.path.join(checkpoint_dir, checkpoint_name))
+    if model.config.decoder_start_token_id is None:
+        model.config.decoder_start_token_id = model.config.pad_token_id
+    model.to(DEVICE)
+    return model
 
 def initialize_optimizer_and_scheduler(args, model, epoch_length):
     optimizer = initialize_optimizer(args, model)
@@ -93,4 +116,3 @@ def get_parameter_names(model, forbidden_layer_types):
     # Add model specific parameters (defined with nn.Parameter) since they are not in any child.
     result += list(model._parameters.keys())
     return result
-
