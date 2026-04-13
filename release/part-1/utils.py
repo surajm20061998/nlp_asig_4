@@ -38,6 +38,7 @@ KEYBOARD_NEIGHBORS = {
     "y": "tghu",
 }
 PROTECTED_TOKENS = {"not", "no", "never", "n't"}
+VOWELS = set("aeiou")
 
 
 def example_transform(example):
@@ -67,7 +68,74 @@ def custom_transform(example):
 
     # You should update example["text"] using your transformation
 
-    tokens = word_tokenize(example["text"])
+    def synonym_replace(word):
+        synonyms = set()
+        for synset in wordnet.synsets(word):
+            for lemma in synset.lemmas():
+                candidate = lemma.name().replace("_", " ").lower()
+                if candidate.isalpha() and candidate != word and len(candidate) >= 3:
+                    synonyms.add(candidate)
+
+        if synonyms:
+            return random.choice(sorted(synonyms))
+        return word
+
+    def keyboard_typo(word):
+        typo_positions = [
+            idx for idx, char in enumerate(word)
+            if char in KEYBOARD_NEIGHBORS
+        ]
+        if not typo_positions:
+            return word
+
+        typo_idx = random.choice(typo_positions)
+        replacement = random.choice(KEYBOARD_NEIGHBORS[word[typo_idx]])
+        return word[:typo_idx] + replacement + word[typo_idx + 1:]
+
+    def swap_adjacent(word):
+        if len(word) < 4:
+            return word
+
+        swap_positions = list(range(1, len(word) - 2))
+        if not swap_positions:
+            return word
+
+        swap_idx = random.choice(swap_positions)
+        chars = list(word)
+        chars[swap_idx], chars[swap_idx + 1] = chars[swap_idx + 1], chars[swap_idx]
+        return "".join(chars)
+
+    def drop_vowel(word):
+        removable = [
+            idx for idx, char in enumerate(word)
+            if char in VOWELS and 0 < idx < len(word) - 1
+        ]
+        if not removable:
+            return word
+
+        drop_idx = random.choice(removable)
+        candidate = word[:drop_idx] + word[drop_idx + 1:]
+        return candidate if len(candidate) >= 3 else word
+
+    def perturb_word(word):
+        operations = []
+
+        if any(char in KEYBOARD_NEIGHBORS for char in word):
+            operations.append(keyboard_typo)
+        if len(word) >= 4:
+            operations.append(swap_adjacent)
+        if any(char in VOWELS for char in word):
+            operations.append(drop_vowel)
+
+        if not operations:
+            return word
+
+        new_word = random.choice(operations)(word)
+        if len(new_word) >= 5 and random.random() < 0.45:
+            new_word = random.choice(operations)(new_word)
+        return new_word
+
+    tokens = word_tokenize(example["text"].lower())
     transformed_tokens = []
 
     for token in tokens:
@@ -75,34 +143,17 @@ def custom_transform(example):
             transformed_tokens.append(token)
             continue
 
-        lower_token = token.lower()
-        new_token = lower_token
+        if token in PROTECTED_TOKENS:
+            transformed_tokens.append(token)
+            continue
 
-        if lower_token not in PROTECTED_TOKENS and len(lower_token) >= 4 and random.random() < 0.12:
-            synonyms = set()
-            for synset in wordnet.synsets(lower_token):
-                for lemma in synset.lemmas():
-                    candidate = lemma.name().replace("_", " ").lower()
-                    if (
-                        candidate.isalpha()
-                        and candidate != lower_token
-                        and len(candidate) >= 3
-                    ):
-                        synonyms.add(candidate)
+        new_token = token
 
-            if synonyms:
-                new_token = random.choice(sorted(synonyms))
+        if len(new_token) >= 4 and random.random() < 0.2:
+            new_token = synonym_replace(new_token)
 
-        if lower_token not in PROTECTED_TOKENS and len(new_token) >= 4 and random.random() < 0.18:
-            typo_positions = [
-                idx for idx, char in enumerate(new_token)
-                if char in KEYBOARD_NEIGHBORS
-            ]
-            if typo_positions:
-                typo_idx = random.choice(typo_positions)
-                replacement_choices = KEYBOARD_NEIGHBORS[new_token[typo_idx]]
-                replacement = random.choice(replacement_choices)
-                new_token = new_token[:typo_idx] + replacement + new_token[typo_idx + 1:]
+        if len(new_token) >= 3 and random.random() < 0.55:
+            new_token = perturb_word(new_token)
 
         transformed_tokens.append(new_token)
 
