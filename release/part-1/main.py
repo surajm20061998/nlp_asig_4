@@ -12,6 +12,7 @@ import random
 import argparse
 from utils import *
 import os
+from pathlib import Path
 
 # Set seed
 random.seed(0)
@@ -26,14 +27,49 @@ def tokenize_function(examples):
     return tokenizer(examples["text"], padding="max_length", truncation=True)
 
 
-def load_imdb_dataset():
+def load_local_imdb_split(split_dir):
+    texts = []
+    labels = []
+
+    for label_name, label_id in [("neg", 0), ("pos", 1)]:
+        label_dir = split_dir / label_name
+        for review_path in sorted(label_dir.glob("*.txt")):
+            texts.append(review_path.read_text(encoding="utf-8"))
+            labels.append(label_id)
+
+    return datasets.Dataset.from_dict({"text": texts, "label": labels})
+
+
+def load_local_imdb_dataset(imdb_dir):
+    imdb_root = Path(imdb_dir)
+    train_dir = imdb_root / "train"
+    test_dir = imdb_root / "test"
+
+    if not train_dir.exists() or not test_dir.exists():
+        raise FileNotFoundError(
+            f"Expected IMDB dataset at {imdb_root} with train/ and test/ subdirectories."
+        )
+
+    return datasets.DatasetDict(
+        {
+            "train": load_local_imdb_split(train_dir),
+            "test": load_local_imdb_split(test_dir),
+        }
+    )
+
+
+def load_imdb_dataset(args):
+    if args.imdb_dir:
+        print(f"Loading IMDB from local directory: {args.imdb_dir}")
+        return load_local_imdb_dataset(args.imdb_dir)
+
     try:
         return load_dataset("imdb")
     except Exception as exc:
         print(f"Falling back to explicit train/test IMDB loading because `load_dataset(\"imdb\")` failed: {exc}")
-        train_split = load_dataset("stanfordnlp/imdb", split="train")
-        test_split = load_dataset("stanfordnlp/imdb", split="test")
-        return datasets.DatasetDict({"train": train_split, "test": test_split})
+        if args.imdb_dir:
+            return load_local_imdb_dataset(args.imdb_dir)
+        raise
 
 
 # Core training function
@@ -176,6 +212,8 @@ if __name__ == "__main__":
     parser.add_argument("--eval", action="store_true", help="evaluate model on the test set")
     parser.add_argument("--eval_transformed", action="store_true", help="evaluate model on the transformed test set")
     parser.add_argument("--model_dir", type=str, default="./out")
+    parser.add_argument("--imdb_dir", type=str, default=None,
+                        help="optional path to a local aclImdb directory")
     parser.add_argument("--debug_train", action="store_true",
                         help="use a subset for training to debug your training loop")
     parser.add_argument("--debug_transformation", action="store_true",
@@ -203,7 +241,7 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained("bert-base-cased")
 
     # Tokenize the dataset
-    dataset = load_imdb_dataset()
+    dataset = load_imdb_dataset(args)
     tokenized_dataset = dataset.map(tokenize_function, batched=True)
 
     # Prepare dataset for use by model
