@@ -26,6 +26,16 @@ def tokenize_function(examples):
     return tokenizer(examples["text"], padding="max_length", truncation=True)
 
 
+def load_imdb_dataset():
+    try:
+        return load_dataset("imdb")
+    except Exception as exc:
+        print(f"Falling back to explicit train/test IMDB loading because `load_dataset(\"imdb\")` failed: {exc}")
+        train_split = load_dataset("stanfordnlp/imdb", split="train")
+        test_split = load_dataset("stanfordnlp/imdb", split="test")
+        return datasets.DatasetDict({"train": train_split, "test": test_split})
+
+
 # Core training function
 def do_train(args, model, train_dataloader, save_dir="./out"):
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
@@ -193,7 +203,7 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained("bert-base-cased")
 
     # Tokenize the dataset
-    dataset = load_dataset("imdb")
+    dataset = load_imdb_dataset()
     tokenized_dataset = dataset.map(tokenize_function, batched=True)
 
     # Prepare dataset for use by model
