@@ -1,9 +1,12 @@
 import argparse
+import os
 import pickle
 from collections import Counter
 
 from utils import read_queries
 from load_data import load_lines
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def normalize_sql(query):
@@ -81,9 +84,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--predicted_sql', required=True)
     parser.add_argument('--predicted_records', required=True)
-    parser.add_argument('--development_sql', default='data/dev.sql')
-    parser.add_argument('--development_nl', default='data/dev.nl')
-    parser.add_argument('--development_records', default='records/ground_truth_dev.pkl')
+    parser.add_argument('--development_sql', default=os.path.join(BASE_DIR, 'data', 'dev.sql'))
+    parser.add_argument('--development_nl', default=os.path.join(BASE_DIR, 'data', 'dev.nl'))
+    parser.add_argument('--development_records', default=os.path.join(BASE_DIR, 'records', 'ground_truth_dev.pkl'))
     args = parser.parse_args()
 
     dev_nl = load_lines(args.development_nl)

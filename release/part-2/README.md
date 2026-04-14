@@ -27,6 +27,41 @@ python evaluate.py
   --development_records records/ground_truth_dev.pkl
 ```
 
+## Training / implementation flow
+
+The Part 2 pipeline is now wired so the same preprocessing options are shared across:
+- `load_data.py` for dataset construction
+- `compute_stats.py` for the report tables
+- `train_t5.py` for finetuning / generation
+
+Baseline finetuning:
+```bash
+python train_t5.py --finetune --experiment_name baseline
+```
+
+Useful optional experiments:
+```bash
+python train_t5.py \
+  --finetune \
+  --experiment_name schema_prompt \
+  --include_schema_in_input
+
+python train_t5.py \
+  --finetune \
+  --experiment_name frozen_encoder \
+  --freeze_encoder
+```
+
+To generate the Table 1 / Table 2 statistics for your report:
+```bash
+python compute_stats.py
+```
+
+If you want the stats to reflect a particular preprocessing configuration, pass the same flags you used in training:
+```bash
+python compute_stats.py --include_schema_in_input --lowercase_inputs
+```
+
 ## Submission
 
 You need to submit your test SQL queries and their associated SQL records. Please only submit your final files corresponding to the test set.
@@ -38,4 +73,3 @@ For database records, ensure that the name of the submission files (in the `reco
 - `t5_ft_experiment_test.pkl` (for extra credit `t5_ft_experiment_ec_test.pkl`)
 
 ⚠️ Note that the predictions in each line of the .sql file or in each index of the list within the .pkl file must match each natural language query in 'data/test.nl' in the order they appear.
-

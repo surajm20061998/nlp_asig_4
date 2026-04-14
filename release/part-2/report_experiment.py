@@ -4,6 +4,8 @@ import pickle
 
 from utils import compute_metrics
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -12,10 +14,10 @@ def main():
     parser.add_argument('--print_paths', action='store_true')
     args = parser.parse_args()
 
-    pred_sql = os.path.join('results', f't5_{args.model_type}_{args.experiment_name}_dev.sql')
-    pred_records = os.path.join('records', f't5_{args.model_type}_{args.experiment_name}_dev.pkl')
-    gold_sql = os.path.join('data', 'dev.sql')
-    gold_records = os.path.join('records', 'ground_truth_dev.pkl')
+    pred_sql = os.path.join(BASE_DIR, 'results', f't5_{args.model_type}_{args.experiment_name}_dev.sql')
+    pred_records = os.path.join(BASE_DIR, 'records', f't5_{args.model_type}_{args.experiment_name}_dev.pkl')
+    gold_sql = os.path.join(BASE_DIR, 'data', 'dev.sql')
+    gold_records = os.path.join(BASE_DIR, 'records', 'ground_truth_dev.pkl')
 
     sql_em, record_em, record_f1, error_msgs = compute_metrics(
         gold_sql,

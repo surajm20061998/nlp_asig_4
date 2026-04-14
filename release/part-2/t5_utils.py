@@ -24,15 +24,18 @@ def initialize_model(args):
     or training a T5 model initialized with the 'google-t5/t5-small' config
     from scratch.
     '''
+    model_name = getattr(args, 'model_name', MODEL_NAME)
+
     if args.finetune:
-        model = T5ForConditionalGeneration.from_pretrained(MODEL_NAME)
+        model = T5ForConditionalGeneration.from_pretrained(model_name)
     else:
-        config = T5Config.from_pretrained(MODEL_NAME)
+        config = T5Config.from_pretrained(model_name)
         model = T5ForConditionalGeneration(config)
 
     if model.config.decoder_start_token_id is None:
         model.config.decoder_start_token_id = model.config.pad_token_id
 
+    apply_parameter_freezing(args, model)
     model.to(DEVICE)
     return model
 
@@ -52,13 +55,35 @@ def save_model(checkpoint_dir, model, best):
 def load_model_from_checkpoint(args, best):
     # Load model from a checkpoint
     model_type = 'ft' if args.finetune else 'scr'
-    checkpoint_dir = os.path.join('checkpoints', f'{model_type}_experiments', args.experiment_name)
+    checkpoint_root = getattr(args, 'checkpoint_root', 'checkpoints')
+    checkpoint_dir = os.path.join(checkpoint_root, f'{model_type}_experiments', args.experiment_name)
     checkpoint_name = 'best' if best else 'last'
     model = T5ForConditionalGeneration.from_pretrained(os.path.join(checkpoint_dir, checkpoint_name))
     if model.config.decoder_start_token_id is None:
         model.config.decoder_start_token_id = model.config.pad_token_id
     model.to(DEVICE)
     return model
+
+def freeze_module(module):
+    for parameter in module.parameters():
+        parameter.requires_grad = False
+
+
+def apply_parameter_freezing(args, model):
+    if getattr(args, 'freeze_embeddings', False):
+        freeze_module(model.shared)
+
+    if getattr(args, 'freeze_encoder', False):
+        freeze_module(model.encoder)
+
+    if getattr(args, 'freeze_decoder', False):
+        freeze_module(model.decoder)
+
+
+def count_parameters(model):
+    total_parameters = sum(parameter.numel() for parameter in model.parameters())
+    trainable_parameters = sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+    return total_parameters, trainable_parameters
 
 def initialize_optimizer_and_scheduler(args, model, epoch_length):
     optimizer = initialize_optimizer(args, model)

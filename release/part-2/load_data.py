@@ -1,29 +1,108 @@
-import os, random, re, string
-from collections import Counter
-import pickle
+import json
+import os
+from dataclasses import dataclass
+from functools import lru_cache
 
-from torch.utils.data import Dataset, DataLoader
-from torch.nn.utils.rnn import pad_sequence
-
-from transformers import T5TokenizerFast
 import torch
+from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import DataLoader, Dataset
+from transformers import AutoTokenizer
 
 PAD_IDX = 0
 TOKENIZER_NAME = 'google-t5/t5-small'
 TASK_PREFIX = 'translate English to SQL: '
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DATA_DIR = os.path.join(BASE_DIR, 'data')
 
 _TOKENIZER = None
 
 
-def get_t5_tokenizer():
+@dataclass(frozen=True)
+class DataConfig:
+    data_folder: str = DEFAULT_DATA_DIR
+    tokenizer_name: str = TOKENIZER_NAME
+    task_prefix: str = TASK_PREFIX
+    max_input_length: int = 512
+    max_target_length: int = 512
+    normalize_whitespace: bool = True
+    lowercase_inputs: bool = False
+    include_schema_in_input: bool = False
+
+
+def get_t5_tokenizer(tokenizer_name=TOKENIZER_NAME):
     global _TOKENIZER
-    if _TOKENIZER is None:
-        _TOKENIZER = T5TokenizerFast.from_pretrained(TOKENIZER_NAME)
+    if _TOKENIZER is None or _TOKENIZER.name_or_path != tokenizer_name:
+        _TOKENIZER = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
     return _TOKENIZER
+
+
+def build_data_config_from_args(args, data_folder=DEFAULT_DATA_DIR):
+    return DataConfig(
+        data_folder=data_folder,
+        tokenizer_name=getattr(args, 'model_name', TOKENIZER_NAME),
+        task_prefix=getattr(args, 'task_prefix', TASK_PREFIX),
+        max_input_length=getattr(args, 'max_input_length', 512),
+        max_target_length=getattr(args, 'max_target_length', 512),
+        normalize_whitespace=getattr(args, 'normalize_whitespace', True),
+        lowercase_inputs=getattr(args, 'lowercase_inputs', False),
+        include_schema_in_input=getattr(args, 'include_schema_in_input', False),
+    )
+
+
+def normalize_text(text):
+    return ' '.join(text.strip().split())
+
+
+@lru_cache(maxsize=8)
+def build_schema_context(schema_path):
+    with open(schema_path, 'r') as f:
+        schema = json.load(f)
+
+    table_descriptions = []
+    for table_name, columns in schema['ents'].items():
+        col_names = ', '.join(columns.keys())
+        table_descriptions.append(f'{table_name} ({col_names})')
+
+    return 'database schema: ' + ' ; '.join(table_descriptions)
+
+
+def preprocess_nl_query(query, data_config):
+    processed_query = normalize_text(query) if data_config.normalize_whitespace else query.strip()
+    if data_config.lowercase_inputs:
+        processed_query = processed_query.lower()
+
+    prompt_parts = []
+    if data_config.task_prefix:
+        prompt_parts.append(data_config.task_prefix.strip())
+    if data_config.include_schema_in_input:
+        schema_path = os.path.join(data_config.data_folder, 'flight_database.schema')
+        prompt_parts.append(build_schema_context(schema_path))
+    prompt_parts.append(processed_query)
+
+    return ' '.join(part for part in prompt_parts if part)
+
+
+def preprocess_sql_query(query, data_config):
+    if data_config.normalize_whitespace:
+        return normalize_text(query)
+    return query.strip()
+
+
+def get_processed_split_text(split, data_folder=DEFAULT_DATA_DIR, data_config=None):
+    data_config = data_config or DataConfig(data_folder=data_folder)
+    nl_queries = load_lines(os.path.join(data_folder, f'{split}.nl'))
+    sql_queries = None if split == 'test' else load_lines(os.path.join(data_folder, f'{split}.sql'))
+
+    processed_nl = [preprocess_nl_query(query, data_config) for query in nl_queries]
+    processed_sql = None
+    if sql_queries is not None:
+        processed_sql = [preprocess_sql_query(query, data_config) for query in sql_queries]
+
+    return processed_nl, processed_sql
 
 class T5Dataset(Dataset):
 
-    def __init__(self, data_folder, split):
+    def __init__(self, data_folder, split, data_config=None):
         '''
         Skeleton for the class for performing data processing for the T5 model.
 
@@ -36,28 +115,23 @@ class T5Dataset(Dataset):
         '''
         self.split = split
         self.is_test = split == 'test'
-        self.tokenizer = get_t5_tokenizer()
+        self.data_config = data_config or DataConfig(data_folder=data_folder)
+        self.tokenizer = get_t5_tokenizer(self.data_config.tokenizer_name)
         self.decoder_start_token_id = self.tokenizer.pad_token_id
-        self.examples = self.process_data(data_folder, split, self.tokenizer)
+        self.examples = self.process_data(data_folder, split, self.tokenizer, self.data_config)
 
-    def process_data(self, data_folder, split, tokenizer):
-        nl_path = os.path.join(data_folder, f'{split}.nl')
-        nl_queries = load_lines(nl_path)
-
-        sql_queries = None
-        if split != 'test':
-            sql_path = os.path.join(data_folder, f'{split}.sql')
-            sql_queries = load_lines(sql_path)
+    def process_data(self, data_folder, split, tokenizer, data_config):
+        nl_queries, sql_queries = get_processed_split_text(split, data_folder, data_config)
+        if sql_queries is not None:
             assert len(nl_queries) == len(sql_queries), f'Mismatched sizes for {split}'
 
         examples = []
         for idx, nl_query in enumerate(nl_queries):
-            encoder_text = TASK_PREFIX + nl_query
             encoder_ids = tokenizer.encode(
-                encoder_text,
+                nl_query,
                 add_special_tokens=True,
                 truncation=True,
-                max_length=512,
+                max_length=data_config.max_input_length,
             )
             encoder_ids = torch.tensor(encoder_ids, dtype=torch.long)
             initial_decoder_inputs = torch.tensor([self.decoder_start_token_id], dtype=torch.long)
@@ -70,7 +144,7 @@ class T5Dataset(Dataset):
                 sql_queries[idx],
                 add_special_tokens=True,
                 truncation=True,
-                max_length=512,
+                max_length=data_config.max_target_length,
             )
             decoder_input_ids = [self.decoder_start_token_id] + target_ids[:-1]
 
@@ -134,19 +208,19 @@ def test_collate_fn(batch):
 
     return encoder_ids, encoder_mask, initial_decoder_inputs
 
-def get_dataloader(batch_size, split):
-    data_folder = 'data'
-    dset = T5Dataset(data_folder, split)
+def get_dataloader(batch_size, split, data_folder=DEFAULT_DATA_DIR, data_config=None):
+    dset = T5Dataset(data_folder, split, data_config=data_config)
     shuffle = split == "train"
     collate_fn = normal_collate_fn if split != "test" else test_collate_fn
 
     dataloader = DataLoader(dset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_fn)
     return dataloader
 
-def load_t5_data(batch_size, test_batch_size):
-    train_loader = get_dataloader(batch_size, "train")
-    dev_loader = get_dataloader(test_batch_size, "dev")
-    test_loader = get_dataloader(test_batch_size, "test")
+def load_t5_data(batch_size, test_batch_size, data_config=None, data_folder=DEFAULT_DATA_DIR):
+    data_config = data_config or DataConfig(data_folder=data_folder)
+    train_loader = get_dataloader(batch_size, "train", data_folder=data_folder, data_config=data_config)
+    dev_loader = get_dataloader(test_batch_size, "dev", data_folder=data_folder, data_config=data_config)
+    test_loader = get_dataloader(test_batch_size, "test", data_folder=data_folder, data_config=data_config)
     
     return train_loader, dev_loader, test_loader
 

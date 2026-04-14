@@ -10,17 +10,23 @@ import wandb
 from transformers import GenerationConfig
 
 from t5_utils import (
+    count_parameters,
     initialize_model,
     initialize_optimizer_and_scheduler,
     save_model,
     load_model_from_checkpoint,
     setup_wandb,
 )
-from load_data import load_t5_data, get_t5_tokenizer
+from load_data import DEFAULT_DATA_DIR, TASK_PREFIX, build_data_config_from_args, get_t5_tokenizer, load_t5_data
 from utils import compute_metrics, save_queries_and_records, set_random_seeds
 
 DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 PAD_IDX = 0
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_RESULTS_DIR = os.path.join(BASE_DIR, 'results')
+DEFAULT_RECORDS_DIR = os.path.join(BASE_DIR, 'records')
+DEFAULT_CHECKPOINT_DIR = os.path.join(BASE_DIR, 'checkpoints')
+DEFAULT_GOLD_DEV_RECORDS_PATH = os.path.join(BASE_DIR, 'records', 'ground_truth_dev.pkl')
 
 
 def normalize_sql(query):
@@ -51,6 +57,14 @@ def get_args():
 
     # Model hyperparameters
     parser.add_argument('--finetune', action='store_true', help="Whether to finetune T5 or not")
+    parser.add_argument('--model_name', type=str, default='google-t5/t5-small',
+                        help="T5 checkpoint/config name to use for the model and tokenizer")
+    parser.add_argument('--freeze_encoder', action='store_true',
+                        help="Freeze all encoder parameters during training")
+    parser.add_argument('--freeze_decoder', action='store_true',
+                        help="Freeze all decoder parameters during training")
+    parser.add_argument('--freeze_embeddings', action='store_true',
+                        help="Freeze the shared token embeddings during training")
 
     # Training hyperparameters
     parser.add_argument('--optimizer_type', type=str, default="AdamW", choices=["AdamW"],
@@ -74,11 +88,24 @@ def get_args():
                         help="How should we name this experiment?")
 
     # Data / generation hyperparameters
+    parser.add_argument('--data_dir', type=str, default=DEFAULT_DATA_DIR)
+    parser.add_argument('--task_prefix', type=str, default=TASK_PREFIX)
+    parser.add_argument('--max_input_length', type=int, default=512)
+    parser.add_argument('--max_target_length', type=int, default=512)
+    parser.add_argument('--lowercase_inputs', action='store_true')
+    parser.add_argument('--include_schema_in_input', action='store_true')
+    parser.add_argument('--no_normalize_whitespace', dest='normalize_whitespace', action='store_false')
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--test_batch_size', type=int, default=16)
     parser.add_argument('--num_beams', type=int, default=4)
     parser.add_argument('--max_generation_length', type=int, default=256)
     parser.add_argument('--length_penalty', type=float, default=1.0)
+    parser.add_argument('--results_dir', type=str, default=DEFAULT_RESULTS_DIR)
+    parser.add_argument('--records_dir', type=str, default=DEFAULT_RECORDS_DIR)
+    parser.add_argument('--checkpoint_root', type=str, default=DEFAULT_CHECKPOINT_DIR)
+    parser.add_argument('--gold_dev_records_path', type=str, default=DEFAULT_GOLD_DEV_RECORDS_PATH)
+
+    parser.set_defaults(normalize_whitespace=True)
 
     args = parser.parse_args()
     return args
@@ -90,11 +117,11 @@ def train(args, model, train_loader, dev_loader, optimizer, scheduler):
 
     experiment_name = args.experiment_name
     model_type = 'ft' if args.finetune else 'scr'
-    checkpoint_dir = os.path.join('checkpoints', f'{model_type}_experiments', experiment_name)
-    gt_sql_path = os.path.join('data/dev.sql')
-    gt_record_path = os.path.join('records/ground_truth_dev.pkl')
-    model_sql_path = os.path.join(f'results/t5_{model_type}_{experiment_name}_dev.sql')
-    model_record_path = os.path.join(f'records/t5_{model_type}_{experiment_name}_dev.pkl')
+    checkpoint_dir = os.path.join(args.checkpoint_root, f'{model_type}_experiments', experiment_name)
+    gt_sql_path = os.path.join(args.data_dir, 'dev.sql')
+    gt_record_path = args.gold_dev_records_path
+    model_sql_path = os.path.join(args.results_dir, f't5_{model_type}_{experiment_name}_dev.sql')
+    model_record_path = os.path.join(args.records_dir, f't5_{model_type}_{experiment_name}_dev.pkl')
 
     for epoch in range(args.max_n_epochs):
         tr_loss = train_epoch(args, model, train_loader, optimizer, scheduler)
@@ -181,7 +208,7 @@ def eval_epoch(args, model, dev_loader, gt_sql_pth, model_sql_path, gt_record_pa
     we found the cross-entropy loss (in the evaluation set) to be well (albeit imperfectly) correlated with F1 performance.
     '''
     model.eval()
-    tokenizer = get_t5_tokenizer()
+    tokenizer = get_t5_tokenizer(args.model_name)
     generation_config = get_generation_config(args, model)
 
     total_loss = 0
@@ -232,7 +259,7 @@ def test_inference(args, model, test_loader, model_sql_path, model_record_path):
     database records. Implementation should be very similar to eval_epoch.
     '''
     model.eval()
-    tokenizer = get_t5_tokenizer()
+    tokenizer = get_t5_tokenizer(args.model_name)
     generation_config = get_generation_config(args, model)
     generated_queries = []
 
@@ -259,16 +286,41 @@ def main():
     args = get_args()
     set_random_seeds(args.seed)
 
-    os.makedirs('results', exist_ok=True)
-    os.makedirs('records', exist_ok=True)
+    os.makedirs(args.results_dir, exist_ok=True)
+    os.makedirs(args.records_dir, exist_ok=True)
+    os.makedirs(args.checkpoint_root, exist_ok=True)
 
     if args.use_wandb:
         # Recommended: Using wandb (or tensorboard) for result logging can make experimentation easier
         setup_wandb(args)
 
     # Load the data and the model
-    train_loader, dev_loader, test_loader = load_t5_data(args.batch_size, args.test_batch_size)
+    data_config = build_data_config_from_args(args, data_folder=args.data_dir)
+    train_loader, dev_loader, test_loader = load_t5_data(
+        args.batch_size,
+        args.test_batch_size,
+        data_config=data_config,
+        data_folder=args.data_dir,
+    )
     model = initialize_model(args)
+    total_parameters, trainable_parameters = count_parameters(model)
+    print(f"Model checkpoint: {args.model_name}")
+    print(
+        "Preprocessing configuration: "
+        f"task_prefix={args.task_prefix!r}, "
+        f"include_schema_in_input={args.include_schema_in_input}, "
+        f"lowercase_inputs={args.lowercase_inputs}, "
+        f"normalize_whitespace={args.normalize_whitespace}, "
+        f"max_input_length={args.max_input_length}, "
+        f"max_target_length={args.max_target_length}"
+    )
+    print(
+        "Freezing configuration: "
+        f"freeze_encoder={args.freeze_encoder}, "
+        f"freeze_decoder={args.freeze_decoder}, "
+        f"freeze_embeddings={args.freeze_embeddings}"
+    )
+    print(f"Trainable parameters: {trainable_parameters:,}/{total_parameters:,}")
     optimizer, scheduler = initialize_optimizer_and_scheduler(args, model, len(train_loader))
 
     # Train
@@ -281,10 +333,10 @@ def main():
     # Dev set
     experiment_name = args.experiment_name
     model_type = 'ft' if args.finetune else 'scr'
-    gt_sql_path = os.path.join('data/dev.sql')
-    gt_record_path = os.path.join('records/ground_truth_dev.pkl')
-    model_sql_path = os.path.join(f'results/t5_{model_type}_{experiment_name}_dev.sql')
-    model_record_path = os.path.join(f'records/t5_{model_type}_{experiment_name}_dev.pkl')
+    gt_sql_path = os.path.join(args.data_dir, 'dev.sql')
+    gt_record_path = args.gold_dev_records_path
+    model_sql_path = os.path.join(args.results_dir, f't5_{model_type}_{experiment_name}_dev.sql')
+    model_record_path = os.path.join(args.records_dir, f't5_{model_type}_{experiment_name}_dev.pkl')
     dev_loss, dev_record_f1, dev_record_em, dev_sql_em, dev_error_rate = eval_epoch(
         args,
         model,
@@ -298,8 +350,8 @@ def main():
     print(f"Dev set results: {dev_error_rate * 100:.2f}% of the generated outputs led to SQL errors")
 
     # Test set
-    model_sql_path = os.path.join(f'results/t5_{model_type}_{experiment_name}_test.sql')
-    model_record_path = os.path.join(f'records/t5_{model_type}_{experiment_name}_test.pkl')
+    model_sql_path = os.path.join(args.results_dir, f't5_{model_type}_{experiment_name}_test.sql')
+    model_record_path = os.path.join(args.records_dir, f't5_{model_type}_{experiment_name}_test.pkl')
     test_inference(args, model, test_loader, model_sql_path, model_record_path)
 
 
