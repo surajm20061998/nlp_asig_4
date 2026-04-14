@@ -58,7 +58,13 @@ def load_queries_and_records(sql_path: str, record_path: str):
 
     return read_qs, records, error_msgs
 
-def save_queries_and_records(sql_queries: List[str], sql_path: str, record_path: str):
+def save_queries_and_records(
+    sql_queries: List[str],
+    sql_path: str,
+    record_path: str,
+    records: List[Any] = None,
+    error_msgs: List[str] = None,
+):
     '''
     Helper function to save model generated SQL queries and their associated records
     to the specified paths.
@@ -82,7 +88,9 @@ def save_queries_and_records(sql_queries: List[str], sql_path: str, record_path:
             f.write(f'{query}\n')
 
     # Next compute and save records
-    records, error_msgs = compute_records(sql_queries)    
+    if records is None or error_msgs is None:
+        records, error_msgs = compute_records(sql_queries)
+
     with open(record_path, 'wb') as f:
         pickle.dump((records, error_msgs), f)
 

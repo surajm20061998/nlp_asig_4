@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -27,6 +28,8 @@ class DataConfig:
     normalize_whitespace: bool = True
     lowercase_inputs: bool = False
     include_schema_in_input: bool = False
+    schema_prompt_mode: str = 'none'
+    canonicalize_sql: bool = False
 
 
 def get_t5_tokenizer(tokenizer_name=TOKENIZER_NAME):
@@ -37,6 +40,11 @@ def get_t5_tokenizer(tokenizer_name=TOKENIZER_NAME):
 
 
 def build_data_config_from_args(args, data_folder=DEFAULT_DATA_DIR):
+    include_schema = getattr(args, 'include_schema_in_input', False)
+    schema_prompt_mode = getattr(args, 'schema_prompt_mode', None)
+    if schema_prompt_mode is None:
+        schema_prompt_mode = 'full' if include_schema else 'none'
+
     return DataConfig(
         data_folder=data_folder,
         tokenizer_name=getattr(args, 'model_name', TOKENIZER_NAME),
@@ -45,7 +53,9 @@ def build_data_config_from_args(args, data_folder=DEFAULT_DATA_DIR):
         max_target_length=getattr(args, 'max_target_length', 512),
         normalize_whitespace=getattr(args, 'normalize_whitespace', True),
         lowercase_inputs=getattr(args, 'lowercase_inputs', False),
-        include_schema_in_input=getattr(args, 'include_schema_in_input', False),
+        include_schema_in_input=include_schema,
+        schema_prompt_mode=schema_prompt_mode,
+        canonicalize_sql=getattr(args, 'canonicalize_sql', False),
     )
 
 
@@ -53,15 +63,42 @@ def normalize_text(text):
     return ' '.join(text.strip().split())
 
 
-@lru_cache(maxsize=8)
-def build_schema_context(schema_path):
+def _normalize_sql_nonquoted_segment(segment):
+    segment = re.sub(r'([(),])', r' \1 ', segment)
+    segment = re.sub(r'(<=|>=|!=|<>|=|<|>)', r' \1 ', segment)
+    segment = re.sub(r'\s+', ' ', segment)
+    return segment.strip()
+
+
+def canonicalize_sql_query(query):
+    parts = re.split(r"('(?:''|[^'])*')", query.strip())
+    normalized_parts = []
+    for idx, part in enumerate(parts):
+        if idx % 2 == 1:
+            normalized_parts.append(part)
+        else:
+            normalized_parts.append(_normalize_sql_nonquoted_segment(part))
+
+    canonical_query = ' '.join(part for part in normalized_parts if part)
+    return normalize_text(canonical_query)
+
+
+@lru_cache(maxsize=16)
+def build_schema_context(schema_path, mode):
     with open(schema_path, 'r') as f:
         schema = json.load(f)
 
+    if mode == 'tables':
+        table_descriptions = list(schema['ents'].keys())
+        return 'database tables: ' + ' , '.join(table_descriptions)
+
     table_descriptions = []
     for table_name, columns in schema['ents'].items():
-        col_names = ', '.join(columns.keys())
-        table_descriptions.append(f'{table_name} ({col_names})')
+        if mode == 'full':
+            col_names = ', '.join(columns.keys())
+            table_descriptions.append(f'{table_name} ({col_names})')
+        else:
+            table_descriptions.append(table_name)
 
     return 'database schema: ' + ' ; '.join(table_descriptions)
 
@@ -74,18 +111,21 @@ def preprocess_nl_query(query, data_config):
     prompt_parts = []
     if data_config.task_prefix:
         prompt_parts.append(data_config.task_prefix.strip())
-    if data_config.include_schema_in_input:
+    if data_config.schema_prompt_mode != 'none':
         schema_path = os.path.join(data_config.data_folder, 'flight_database.schema')
-        prompt_parts.append(build_schema_context(schema_path))
+        prompt_parts.append(build_schema_context(schema_path, data_config.schema_prompt_mode))
     prompt_parts.append(processed_query)
 
     return ' '.join(part for part in prompt_parts if part)
 
 
 def preprocess_sql_query(query, data_config):
+    processed_query = query.strip()
+    if data_config.canonicalize_sql:
+        return canonicalize_sql_query(processed_query)
     if data_config.normalize_whitespace:
-        return normalize_text(query)
-    return query.strip()
+        return normalize_text(processed_query)
+    return processed_query
 
 
 def get_processed_split_text(split, data_folder=DEFAULT_DATA_DIR, data_config=None):

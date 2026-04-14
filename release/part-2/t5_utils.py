@@ -3,7 +3,7 @@ import os
 import torch
 
 import transformers
-from transformers import T5ForConditionalGeneration, T5Config
+from transformers import Adafactor, T5Config, T5ForConditionalGeneration
 from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS
 import wandb
 
@@ -55,8 +55,9 @@ def save_model(checkpoint_dir, model, best):
 def load_model_from_checkpoint(args, best):
     # Load model from a checkpoint
     model_type = 'ft' if args.finetune else 'scr'
+    checkpoint_experiment_name = getattr(args, 'load_from_experiment_name', None) or args.experiment_name
     checkpoint_root = getattr(args, 'checkpoint_root', 'checkpoints')
-    checkpoint_dir = os.path.join(checkpoint_root, f'{model_type}_experiments', args.experiment_name)
+    checkpoint_dir = os.path.join(checkpoint_root, f'{model_type}_experiments', checkpoint_experiment_name)
     checkpoint_name = 'best' if best else 'last'
     model = T5ForConditionalGeneration.from_pretrained(os.path.join(checkpoint_dir, checkpoint_name))
     if model.config.decoder_start_token_id is None:
@@ -112,8 +113,16 @@ def initialize_optimizer(args, model):
         optimizer = torch.optim.AdamW(
             optimizer_grouped_parameters, lr=args.learning_rate, eps=1e-8, betas=(0.9, 0.999)
         )
+    elif args.optimizer_type == "Adafactor":
+        optimizer = Adafactor(
+            optimizer_grouped_parameters,
+            lr=args.learning_rate,
+            scale_parameter=False,
+            relative_step=False,
+            warmup_init=False,
+        )
     else:
-        pass
+        raise NotImplementedError(f'Unsupported optimizer type: {args.optimizer_type}')
 
     return optimizer
         

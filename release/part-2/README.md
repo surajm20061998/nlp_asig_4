@@ -62,6 +62,16 @@ If you want the stats to reflect a particular preprocessing configuration, pass 
 python compute_stats.py --include_schema_in_input --lowercase_inputs
 ```
 
+For curated sweeps, start with decode-only experiments on an existing checkpoint:
+```bash
+python sweep_experiments.py --preset decode_baseline --base_experiment baseline --skip_test_inference
+```
+
+Then try the stronger retraining sweep:
+```bash
+python sweep_experiments.py --preset record_f1_push --base_experiment baseline --skip_test_inference
+```
+
 ## Submission
 
 You need to submit your test SQL queries and their associated SQL records. Please only submit your final files corresponding to the test set.

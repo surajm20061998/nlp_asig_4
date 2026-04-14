@@ -53,6 +53,8 @@ def build_parser():
     parser.add_argument('--max_target_length', type=int, default=512)
     parser.add_argument('--lowercase_inputs', action='store_true')
     parser.add_argument('--include_schema_in_input', action='store_true')
+    parser.add_argument('--schema_prompt_mode', choices=['none', 'tables', 'full'])
+    parser.add_argument('--canonicalize_sql', action='store_true')
     parser.add_argument('--no_normalize_whitespace', dest='normalize_whitespace', action='store_false')
     parser.set_defaults(normalize_whitespace=True)
     return parser
@@ -100,6 +102,8 @@ def main():
             'normalize_whitespace': args.normalize_whitespace,
             'lowercase_inputs': args.lowercase_inputs,
             'include_schema_in_input': args.include_schema_in_input,
+            'schema_prompt_mode': args.schema_prompt_mode or ('full' if args.include_schema_in_input else 'none'),
+            'canonicalize_sql': args.canonicalize_sql,
             'max_input_length': args.max_input_length,
             'max_target_length': args.max_target_length,
         },
