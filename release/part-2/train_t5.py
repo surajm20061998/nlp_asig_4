@@ -161,7 +161,7 @@ def get_args():
                         help="Whether to use a LR scheduler and what type to use if so")
     parser.add_argument('--num_warmup_epochs', type=int, default=0,
                         help="How many epochs to warm up the learning rate for if using a scheduler")
-    parser.add_argument('--max_n_epochs', type=int, default=10,
+    parser.add_argument('--max_n_epochs', type=int, default=20,
                         help="How many epochs to train the model for")
     parser.add_argument('--patience_epochs', type=int, default=2,
                         help="If validation performance stops improving, how many epochs should we wait before stopping?")
