@@ -111,20 +111,20 @@ def compute_records(processed_qs: List[str]):
     num_threads = 10
     timeout_secs = 120
 
-    pool = ThreadPoolExecutor(num_threads)
-    futures = []
-    for i, query in enumerate(processed_qs):
-        futures.append(pool.submit(compute_record, i, query))
-        
     rec_dict = {}
-    try:
-        for x in tqdm(as_completed(futures, timeout=timeout_secs)):
-            query_id, rec, error_msg = x.result()
-            rec_dict[query_id] = (rec, error_msg)
-    except:
-        for future in futures:
-            if not future.done():
-                future.cancel()
+    with ThreadPoolExecutor(max_workers=num_threads) as pool:
+        futures = []
+        for i, query in enumerate(processed_qs):
+            futures.append(pool.submit(compute_record, i, query))
+
+        try:
+            for x in tqdm(as_completed(futures, timeout=timeout_secs)):
+                query_id, rec, error_msg = x.result()
+                rec_dict[query_id] = (rec, error_msg)
+        except Exception:
+            for future in futures:
+                if not future.done():
+                    future.cancel()
             
     recs = []
     error_msgs = []
