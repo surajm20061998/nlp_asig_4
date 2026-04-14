@@ -11,7 +11,6 @@ import torch
 PAD_IDX = 0
 TOKENIZER_NAME = 'google-t5/t5-small'
 TASK_PREFIX = 'translate English to SQL: '
-DECODER_START_TOKEN = '<extra_id_0>'
 
 _TOKENIZER = None
 
@@ -38,7 +37,7 @@ class T5Dataset(Dataset):
         self.split = split
         self.is_test = split == 'test'
         self.tokenizer = get_t5_tokenizer()
-        self.decoder_start_token_id = self.tokenizer.convert_tokens_to_ids(DECODER_START_TOKEN)
+        self.decoder_start_token_id = self.tokenizer.pad_token_id
         self.examples = self.process_data(data_folder, split, self.tokenizer)
 
     def process_data(self, data_folder, split, tokenizer):

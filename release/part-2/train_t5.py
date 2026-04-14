@@ -31,6 +31,7 @@ def get_generation_config(args, model):
     return GenerationConfig(
         max_new_tokens=args.max_generation_length,
         num_beams=args.num_beams,
+        length_penalty=args.length_penalty,
         early_stopping=args.num_beams > 1,
         pad_token_id=model.config.pad_token_id,
         eos_token_id=model.config.eos_token_id,
@@ -77,6 +78,7 @@ def get_args():
     parser.add_argument('--test_batch_size', type=int, default=16)
     parser.add_argument('--num_beams', type=int, default=4)
     parser.add_argument('--max_generation_length', type=int, default=256)
+    parser.add_argument('--length_penalty', type=float, default=1.0)
 
     args = parser.parse_args()
     return args
@@ -141,30 +143,27 @@ def train_epoch(args, model, train_loader, optimizer, scheduler):
     model.train()
     total_loss = 0
     total_tokens = 0
-    criterion = nn.CrossEntropyLoss()
 
     for encoder_input, encoder_mask, decoder_input, decoder_targets, _ in tqdm(train_loader):
         optimizer.zero_grad()
         encoder_input = encoder_input.to(DEVICE)
         encoder_mask = encoder_mask.to(DEVICE)
-        decoder_input = decoder_input.to(DEVICE)
         decoder_targets = decoder_targets.to(DEVICE)
+        labels = decoder_targets.masked_fill(decoder_targets == PAD_IDX, -100)
 
-        logits = model(
+        outputs = model(
             input_ids=encoder_input,
             attention_mask=encoder_mask,
-            decoder_input_ids=decoder_input,
-        )['logits']
-
-        non_pad = decoder_targets != PAD_IDX
-        loss = criterion(logits[non_pad], decoder_targets[non_pad])
+            labels=labels,
+        )
+        loss = outputs.loss
         loss.backward()
         optimizer.step()
         if scheduler is not None:
             scheduler.step()
 
         with torch.no_grad():
-            num_tokens = torch.sum(non_pad).item()
+            num_tokens = torch.sum(decoder_targets != PAD_IDX).item()
             total_loss += loss.item() * num_tokens
             total_tokens += num_tokens
 
@@ -184,7 +183,6 @@ def eval_epoch(args, model, dev_loader, gt_sql_pth, model_sql_path, gt_record_pa
     model.eval()
     tokenizer = get_t5_tokenizer()
     generation_config = get_generation_config(args, model)
-    criterion = nn.CrossEntropyLoss()
 
     total_loss = 0
     total_tokens = 0
@@ -193,27 +191,23 @@ def eval_epoch(args, model, dev_loader, gt_sql_pth, model_sql_path, gt_record_pa
     for encoder_input, encoder_mask, decoder_input, decoder_targets, initial_decoder_inputs in tqdm(dev_loader):
         encoder_input = encoder_input.to(DEVICE)
         encoder_mask = encoder_mask.to(DEVICE)
-        decoder_input = decoder_input.to(DEVICE)
         decoder_targets = decoder_targets.to(DEVICE)
-        initial_decoder_inputs = initial_decoder_inputs.to(DEVICE)
+        labels = decoder_targets.masked_fill(decoder_targets == PAD_IDX, -100)
 
         with torch.no_grad():
-            logits = model(
+            outputs = model(
                 input_ids=encoder_input,
                 attention_mask=encoder_mask,
-                decoder_input_ids=decoder_input,
-            )['logits']
-
-            non_pad = decoder_targets != PAD_IDX
-            loss = criterion(logits[non_pad], decoder_targets[non_pad])
-            num_tokens = torch.sum(non_pad).item()
+                labels=labels,
+            )
+            loss = outputs.loss
+            num_tokens = torch.sum(decoder_targets != PAD_IDX).item()
             total_loss += loss.item() * num_tokens
             total_tokens += num_tokens
 
             generated_ids = model.generate(
                 input_ids=encoder_input,
                 attention_mask=encoder_mask,
-                decoder_input_ids=initial_decoder_inputs,
                 generation_config=generation_config,
             )
 
@@ -245,13 +239,11 @@ def test_inference(args, model, test_loader, model_sql_path, model_record_path):
     for encoder_input, encoder_mask, initial_decoder_inputs in tqdm(test_loader):
         encoder_input = encoder_input.to(DEVICE)
         encoder_mask = encoder_mask.to(DEVICE)
-        initial_decoder_inputs = initial_decoder_inputs.to(DEVICE)
 
         with torch.no_grad():
             generated_ids = model.generate(
                 input_ids=encoder_input,
                 attention_mask=encoder_mask,
-                decoder_input_ids=initial_decoder_inputs,
                 generation_config=generation_config,
             )
 
