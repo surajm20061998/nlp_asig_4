@@ -4,6 +4,7 @@ import os
 import re
 import pickle
 import random
+import time
 from tqdm import tqdm
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,6 +14,7 @@ import torch
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, 'data', 'flight_database.db')
+SQLITE_QUERY_TIMEOUT_SECS = 5.0
 
 def compute_metrics(gt_path: str, model_path: str, gt_query_records: str = None, model_query_records: str = None):
     '''
@@ -142,6 +144,14 @@ def compute_records(processed_qs: List[str]):
 def compute_record(query_id, query):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    start_time = time.monotonic()
+
+    def progress_handler():
+        if time.monotonic() - start_time > SQLITE_QUERY_TIMEOUT_SECS:
+            return 1
+        return 0
+
+    conn.set_progress_handler(progress_handler, 10_000)
 
     try:
         cursor.execute(query)
@@ -149,7 +159,10 @@ def compute_record(query_id, query):
         error_msg = ""
     except Exception as e:
         rec = []
-        error_msg = f"{type(e).__name__}: {e}"
+        if isinstance(e, sqlite3.OperationalError) and 'interrupted' in str(e).lower():
+            error_msg = "Query timed out"
+        else:
+            error_msg = f"{type(e).__name__}: {e}"
 
     conn.close()
     return query_id, rec, error_msg
