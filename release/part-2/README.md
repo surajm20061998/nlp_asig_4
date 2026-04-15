@@ -72,6 +72,16 @@ Then try the stronger retraining sweep:
 python sweep_experiments.py --preset record_f1_push --base_experiment baseline --skip_test_inference
 ```
 
+Recommended leaderboard workflow:
+```bash
+python sweep_experiments.py --preset safe_leaderboard --base_experiment baseline --skip_test_inference
+```
+
+Then, after choosing the best training checkpoint from dev Record F1, try execution-guided decoding on that checkpoint:
+```bash
+python sweep_experiments.py --preset aggressive_leaderboard --base_experiment <best_training_experiment> --skip_test_inference
+```
+
 ## Submission
 
 You need to submit your test SQL queries and their associated SQL records. Please only submit your final files corresponding to the test set.
