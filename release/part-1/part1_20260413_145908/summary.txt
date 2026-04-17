@@ -1,0 +1,15 @@
+Run directory: /scratch/sm12377/content/nlpAsig4/nlp_asig_4/release/part-1/logs/part1_20260413_145908
+
+Generated output files:
+-rw-r--r--. 1 sm12377 sm12377 98K Apr 13 17:39 /scratch/sm12377/content/nlpAsig4/nlp_asig_4/release/part-1/logs/part1_20260413_145908/out_augmented_original.txt
+-rw-r--r--. 1 sm12377 sm12377 98K Apr 13 17:39 /scratch/sm12377/content/nlpAsig4/nlp_asig_4/release/part-1/logs/part1_20260413_145908/out_augmented_transformed.txt
+-rw-r--r--. 1 sm12377 sm12377 98K Apr 13 17:39 /scratch/sm12377/content/nlpAsig4/nlp_asig_4/release/part-1/logs/part1_20260413_145908/out_original.txt
+-rw-r--r--. 1 sm12377 sm12377 98K Apr 13 17:39 /scratch/sm12377/content/nlpAsig4/nlp_asig_4/release/part-1/logs/part1_20260413_145908/out_transformed.txt
+
+Generated log files:
+-rw-r--r--. 1 sm12377 sm12377    0 Apr 13 14:59 /scratch/sm12377/content/nlpAsig4/nlp_asig_4/release/part-1/logs/part1_20260413_145908/00_py_compile.log
+-rw-r--r--. 1 sm12377 sm12377  16K Apr 13 15:00 /scratch/sm12377/content/nlpAsig4/nlp_asig_4/release/part-1/logs/part1_20260413_145908/01_debug_transformation.log
+-rw-r--r--. 1 sm12377 sm12377 3.3M Apr 13 16:04 /scratch/sm12377/content/nlpAsig4/nlp_asig_4/release/part-1/logs/part1_20260413_145908/02_q1_train_eval.log
+-rw-r--r--. 1 sm12377 sm12377 1.1M Apr 13 16:13 /scratch/sm12377/content/nlpAsig4/nlp_asig_4/release/part-1/logs/part1_20260413_145908/03_q2_eval_transformed.log
+-rw-r--r--. 1 sm12377 sm12377 3.8M Apr 13 17:30 /scratch/sm12377/content/nlpAsig4/nlp_asig_4/release/part-1/logs/part1_20260413_145908/04_q3_train_augmented_eval_original.log
+-rw-r--r--. 1 sm12377 sm12377 1.1M Apr 13 17:39 /scratch/sm12377/content/nlpAsig4/nlp_asig_4/release/part-1/logs/part1_20260413_145908/05_q3_eval_augmented_transformed.log
