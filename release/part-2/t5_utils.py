@@ -3,19 +3,15 @@ import os
 import torch
 
 import transformers
-from transformers import Adafactor, T5Config, T5ForConditionalGeneration
+from transformers import T5ForConditionalGeneration, T5Config
 from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS
 import wandb
 
 DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-MODEL_NAME = 'google-t5/t5-small'
 
 def setup_wandb(args):
-    wandb.init(
-        project='nlp-hw4-text-to-sql',
-        name=args.experiment_name,
-        config=vars(args),
-    )
+    # Implement this if you wish to use wandb in your experiments
+    pass
 
 def initialize_model(args):
     '''
@@ -24,19 +20,13 @@ def initialize_model(args):
     or training a T5 model initialized with the 'google-t5/t5-small' config
     from scratch.
     '''
-    model_name = getattr(args, 'model_name', MODEL_NAME)
-
     if args.finetune:
-        model = T5ForConditionalGeneration.from_pretrained(model_name)
+        model = T5ForConditionalGeneration.from_pretrained('google-t5/t5-small')
     else:
-        config = T5Config.from_pretrained(model_name)
+        config = T5Config.from_pretrained('google-t5/t5-small')
         model = T5ForConditionalGeneration(config)
-
-    if model.config.decoder_start_token_id is None:
-        model.config.decoder_start_token_id = model.config.pad_token_id
-
-    apply_parameter_freezing(args, model)
-    model.to(DEVICE)
+    
+    model = model.to(DEVICE)
     return model
 
 def mkdir(dirpath):
@@ -47,44 +37,26 @@ def mkdir(dirpath):
             pass
 
 def save_model(checkpoint_dir, model, best):
-    # Save model checkpoint to be able to load the model later
     mkdir(checkpoint_dir)
-    checkpoint_name = 'best' if best else 'last'
-    model.save_pretrained(os.path.join(checkpoint_dir, checkpoint_name))
+    if best:
+        save_path = os.path.join(checkpoint_dir, 'best_model.pt')
+    else:
+        save_path = os.path.join(checkpoint_dir, 'last_model.pt')
+    torch.save(model.state_dict(), save_path)
 
 def load_model_from_checkpoint(args, best):
-    # Load model from a checkpoint
+    model = initialize_model(args)
     model_type = 'ft' if args.finetune else 'scr'
-    checkpoint_experiment_name = getattr(args, 'load_from_experiment_name', None) or args.experiment_name
-    checkpoint_root = getattr(args, 'checkpoint_root', 'checkpoints')
-    checkpoint_dir = os.path.join(checkpoint_root, f'{model_type}_experiments', checkpoint_experiment_name)
-    checkpoint_name = 'best' if best else 'last'
-    model = T5ForConditionalGeneration.from_pretrained(os.path.join(checkpoint_dir, checkpoint_name))
-    if model.config.decoder_start_token_id is None:
-        model.config.decoder_start_token_id = model.config.pad_token_id
-    model.to(DEVICE)
+    checkpoint_dir = os.path.join('checkpoints', f'{model_type}_experiments', args.experiment_name)
+    
+    if best:
+        checkpoint_path = os.path.join(checkpoint_dir, 'best_model.pt')
+    else:
+        checkpoint_path = os.path.join(checkpoint_dir, 'last_model.pt')
+    
+    model.load_state_dict(torch.load(checkpoint_path, map_location=DEVICE))
+    model = model.to(DEVICE)
     return model
-
-def freeze_module(module):
-    for parameter in module.parameters():
-        parameter.requires_grad = False
-
-
-def apply_parameter_freezing(args, model):
-    if getattr(args, 'freeze_embeddings', False):
-        freeze_module(model.shared)
-
-    if getattr(args, 'freeze_encoder', False):
-        freeze_module(model.encoder)
-
-    if getattr(args, 'freeze_decoder', False):
-        freeze_module(model.decoder)
-
-
-def count_parameters(model):
-    total_parameters = sum(parameter.numel() for parameter in model.parameters())
-    trainable_parameters = sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
-    return total_parameters, trainable_parameters
 
 def initialize_optimizer_and_scheduler(args, model, epoch_length):
     optimizer = initialize_optimizer(args, model)
@@ -113,16 +85,8 @@ def initialize_optimizer(args, model):
         optimizer = torch.optim.AdamW(
             optimizer_grouped_parameters, lr=args.learning_rate, eps=1e-8, betas=(0.9, 0.999)
         )
-    elif args.optimizer_type == "Adafactor":
-        optimizer = Adafactor(
-            optimizer_grouped_parameters,
-            lr=args.learning_rate,
-            scale_parameter=False,
-            relative_step=False,
-            warmup_init=False,
-        )
     else:
-        raise NotImplementedError(f'Unsupported optimizer type: {args.optimizer_type}')
+        pass
 
     return optimizer
         
@@ -150,3 +114,4 @@ def get_parameter_names(model, forbidden_layer_types):
     # Add model specific parameters (defined with nn.Parameter) since they are not in any child.
     result += list(model._parameters.keys())
     return result
+

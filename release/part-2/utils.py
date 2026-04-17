@@ -4,7 +4,6 @@ import os
 import re
 import pickle
 import random
-import time
 from tqdm import tqdm
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -12,9 +11,7 @@ from typing import List, Any
 
 import torch
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, 'data', 'flight_database.db')
-SQLITE_QUERY_TIMEOUT_SECS = 5.0
+DB_PATH = 'data/flight_database.db'
 
 def compute_metrics(gt_path: str, model_path: str, gt_query_records: str = None, model_query_records: str = None):
     '''
@@ -60,13 +57,7 @@ def load_queries_and_records(sql_path: str, record_path: str):
 
     return read_qs, records, error_msgs
 
-def save_queries_and_records(
-    sql_queries: List[str],
-    sql_path: str,
-    record_path: str,
-    records: List[Any] = None,
-    error_msgs: List[str] = None,
-):
+def save_queries_and_records(sql_queries: List[str], sql_path: str, record_path: str):
     '''
     Helper function to save model generated SQL queries and their associated records
     to the specified paths.
@@ -76,23 +67,13 @@ def save_queries_and_records(
         * sql_path (str): Path to save SQL queries
         * record_path (str): Path to save database records associated with queries
     '''
-    sql_dir = os.path.dirname(sql_path)
-    if sql_dir:
-        os.makedirs(sql_dir, exist_ok=True)
-
-    record_dir = os.path.dirname(record_path)
-    if record_dir:
-        os.makedirs(record_dir, exist_ok=True)
-
     # First save the queries
     with open(sql_path, 'w') as f:
         for query in sql_queries:
             f.write(f'{query}\n')
 
     # Next compute and save records
-    if records is None or error_msgs is None:
-        records, error_msgs = compute_records(sql_queries)
-
+    records, error_msgs = compute_records(sql_queries)    
     with open(record_path, 'wb') as f:
         pickle.dump((records, error_msgs), f)
 
@@ -113,20 +94,20 @@ def compute_records(processed_qs: List[str]):
     num_threads = 10
     timeout_secs = 120
 
+    pool = ThreadPoolExecutor(num_threads)
+    futures = []
+    for i, query in enumerate(processed_qs):
+        futures.append(pool.submit(compute_record, i, query))
+        
     rec_dict = {}
-    with ThreadPoolExecutor(max_workers=num_threads) as pool:
-        futures = []
-        for i, query in enumerate(processed_qs):
-            futures.append(pool.submit(compute_record, i, query))
-
-        try:
-            for x in tqdm(as_completed(futures, timeout=timeout_secs)):
-                query_id, rec, error_msg = x.result()
-                rec_dict[query_id] = (rec, error_msg)
-        except Exception:
-            for future in futures:
-                if not future.done():
-                    future.cancel()
+    try:
+        for x in tqdm(as_completed(futures, timeout=timeout_secs)):
+            query_id, rec, error_msg = x.result()
+            rec_dict[query_id] = (rec, error_msg)
+    except:
+        for future in futures:
+            if not future.done():
+                future.cancel()
             
     recs = []
     error_msgs = []
@@ -144,14 +125,6 @@ def compute_records(processed_qs: List[str]):
 def compute_record(query_id, query):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    start_time = time.monotonic()
-
-    def progress_handler():
-        if time.monotonic() - start_time > SQLITE_QUERY_TIMEOUT_SECS:
-            return 1
-        return 0
-
-    conn.set_progress_handler(progress_handler, 10_000)
 
     try:
         cursor.execute(query)
@@ -159,10 +132,7 @@ def compute_record(query_id, query):
         error_msg = ""
     except Exception as e:
         rec = []
-        if isinstance(e, sqlite3.OperationalError) and 'interrupted' in str(e).lower():
-            error_msg = "Query timed out"
-        else:
-            error_msg = f"{type(e).__name__}: {e}"
+        error_msg = f"{type(e).__name__}: {e}"
 
     conn.close()
     return query_id, rec, error_msg
